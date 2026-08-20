@@ -48,7 +48,7 @@ installed NavigationBarTransitions background hook methods=1
 
 ## 构建
 
-本地需要 JDK 17、Android SDK 36 和 Gradle 9.5。设置 `ANDROID_HOME`（或
+本地需要 JDK 17、Android SDK 36 和 Gradle 9.5.1。设置 `ANDROID_HOME`（或
 `ANDROID_SDK_ROOT`）后执行：
 
 ```powershell

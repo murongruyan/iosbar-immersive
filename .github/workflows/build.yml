@@ -27,10 +27,10 @@ jobs:
         shell: bash
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
 
-      - name: Set up Gradle 9.5
+      - name: Set up Gradle 9.5.1
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '9.5'
+          gradle-version: '9.5.1'
 
       - name: Build and verify module
         shell: pwsh
