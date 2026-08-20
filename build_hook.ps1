@@ -7,8 +7,13 @@ $gradle = $null
 if ($env:GRADLE_BIN -and (Test-Path -LiteralPath $env:GRADLE_BIN)) {
   $gradle = $env:GRADLE_BIN
 } else {
-  $gradleCommand = Get-Command gradle.bat -ErrorAction SilentlyContinue
-  if (-not $gradleCommand) { $gradleCommand = Get-Command gradle -ErrorAction SilentlyContinue }
+  if ($IsWindows) {
+    $gradleCommand = Get-Command gradle.bat -ErrorAction SilentlyContinue
+    if (-not $gradleCommand) { $gradleCommand = Get-Command gradle -ErrorAction SilentlyContinue }
+  } else {
+    $gradleCommand = Get-Command gradle -ErrorAction SilentlyContinue
+    if (-not $gradleCommand) { $gradleCommand = Get-Command gradle.bat -ErrorAction SilentlyContinue }
+  }
   if ($gradleCommand) { $gradle = $gradleCommand.Source }
 }
 if (-not $gradle) {
@@ -17,7 +22,7 @@ if (-not $gradle) {
     Select-Object -First 1
   if ($knownGradle) { $gradle = $knownGradle.FullName }
 }
-if (-not $gradle) { throw 'Gradle 9.5 is required. Set GRADLE_BIN or put gradle on PATH.' }
+if (-not $gradle) { throw 'Gradle 9.5.1 is required. Set GRADLE_BIN or put gradle on PATH.' }
 
 $sdk = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } elseif ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { $null }
 if (-not $sdk) {
