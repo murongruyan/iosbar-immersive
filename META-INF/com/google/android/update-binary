@@ -1,0 +1,66 @@
+#!/sbin/sh
+umask 022
+ui_print() { echo "$1"; }
+require_new_magisk() {
+  ui_print "*******************************"
+  ui_print " Please install Magisk v19.0+! "
+  ui_print "*******************************"
+  exit 1
+}
+
+OUTFD=$2
+ZIPFILE=$3
+mount /data 2>/dev/null
+[ -f /data/adb/magisk/util_functions.sh ] || require_new_magisk
+. /data/adb/magisk/util_functions.sh
+[ "$MAGISK_VER_CODE" -lt 19000 ] && require_new_magisk
+
+if [ "$MAGISK_VER_CODE" -ge 20400 ]; then
+  install_module
+  exit 0
+fi
+
+TMPDIR=/dev/tmp
+PERSISTDIR=/sbin/.magisk/mirror/persist
+rm -rf "$TMPDIR" 2>/dev/null
+mkdir -p "$TMPDIR"
+setup_flashable
+mount_partitions
+api_level_arch_detect
+$BOOTMODE && boot_actions || recovery_actions
+extract_prop() {
+  unzip -o "$ZIPFILE" module.prop -d "$TMPDIR" >&2
+  [ -f "$TMPDIR/module.prop" ] || abort "! Unable to extract zip file!"
+}
+extract_prop
+$BOOTMODE && MODDIRNAME=modules_update || MODDIRNAME=modules
+MODULEROOT=$NVBASE/$MODDIRNAME
+MODID=$(grep_prop id "$TMPDIR/module.prop")
+MODPATH=$MODULEROOT/$MODID
+MODNAME=$(grep_prop name "$TMPDIR/module.prop")
+rm -rf "$MODPATH" 2>/dev/null
+mkdir -p "$MODPATH"
+print_modname() {
+  ui_print "*******************************"
+  ui_print " $MODNAME "
+  ui_print "*******************************"
+}
+print_modname
+unzip -o "$ZIPFILE" customize.sh -d "$MODPATH" >&2
+if ! grep -q '^SKIPUNZIP=1$' "$MODPATH/customize.sh" 2>/dev/null; then
+  ui_print "- Extracting module files"
+  unzip -o "$ZIPFILE" -x 'META-INF/*' -d "$MODPATH" >&2
+  set_perm_recursive "$MODPATH" 0 0 0755 0644
+fi
+[ -f "$MODPATH/customize.sh" ] && . "$MODPATH/customize.sh"
+if $BOOTMODE; then
+  mktouch "$NVBASE/modules/$MODID/update"
+  cp -af "$MODPATH/module.prop" "$NVBASE/modules/$MODID/module.prop"
+fi
+rm -rf "$MODPATH/system/placeholder" "$MODPATH/customize.sh" \
+  "$MODPATH/README.md" "$MODPATH/.git*" 2>/dev/null
+cd /
+$BOOTMODE || recovery_cleanup
+rm -rf "$TMPDIR"
+ui_print "- Done"
+exit 0

@@ -1,0 +1,7 @@
+id=iosbar_immersive
+name=iOS-style immersive gesture bar
+version=0.4.1
+versionCode=8
+author=Codex
+description=Immersive iOS-style gesture bar with a SystemUI-only geometry and transient-scrim hook.
+minMagisk=24000
