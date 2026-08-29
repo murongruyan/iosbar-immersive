@@ -63,3 +63,9 @@ installed NavigationBarTransitions background hook methods=1
 本项目以 GPL-3.0-only 发布，完整条款见 [LICENSE](LICENSE)。提交到 `main` 或
 推送 `v*` 标签会触发 `.github/workflows/build.yml`；标签构建会运行静态检查并将
 标准 ZIP 和当前版本更新日志发布到 GitHub Release。
+
+## 打赏
+
+如果好用，请支持我！
+
+![收款码](222.png)
