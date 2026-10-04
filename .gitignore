@@ -5,3 +5,6 @@ src/hook/build/
 src/hook/.kotlin/
 work/
 .reasonix/
+src/hook/local.properties
+src/hook/release.jks
+src/hook/慕容调度.jks

@@ -1,5 +1,17 @@
 # 更新日志
 
+## 0.6.1 (2026-10-05)
+
+- **改用与慕容调度同一套签名**（keystore 别名 `慕容调度`，证书 SHA-256
+  `77:76:D8:CF:8C:A3:48:2E:9E:A9:02:03:2E:40:2E:9D:93:10:A9:B2:0F:0A:6B:B9:1F:40:8C:C2:2A:07:E9:0E`）。
+  0.6.0 的包是构建机随机生成的 Android Debug 签名，每个版本都不一样，用户无法覆盖安装；
+  现在前后版本签名一致，可以直接升级。
+- ⚠️ **已装 0.6.0 的请先卸载再装本版**（`adb uninstall com.iosbar.navhook`，或在 LSPosed
+  里停用后卸载模块），因为签名不同无法覆盖；装过这一版之后就能正常增量升级了。
+- 构建流程改为产出**签名后的 release 包**（`assembleRelease` → `runtime/iosbar-navhook.apk`），
+  CI 通过 `KEYSTORE_BASE64` / `STORE_PASSWORD` / `KEY_PASSWORD` 三个 Secret 注入签名材料，
+  keystore 本身不入库。
+
 ## 0.6.0 (2026-10-05)
 
 - **设置界面完全重做**，对齐 KernelSU Manager / LSPosed / InstallerX-Revived 的 Miuix 版式：

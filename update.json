@@ -1,7 +1,7 @@
 {
-  "version": "0.6.0",
-  "versionCode": 10,
-  "zipUrl": "https://github.com/murongruyan/iosbar-immersive/releases/download/v0.6.0/iosbar-navhook-v0.6.0.apk",
+  "version": "0.6.1",
+  "versionCode": 11,
+  "zipUrl": "https://github.com/murongruyan/iosbar-immersive/releases/download/v0.6.1/iosbar-navhook-v0.6.1.apk",
   "changelog": "https://raw.githubusercontent.com/murongruyan/iosbar-immersive/master/UPDATE.md",
   "homepage": "https://github.com/murongruyan/iosbar-immersive"
 }

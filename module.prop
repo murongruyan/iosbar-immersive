@@ -1,7 +1,7 @@
 id=iosbar_immersive
 name=iOS-style immersive gesture bar
-version=0.6.0
-versionCode=10
+version=0.6.1
+versionCode=11
 author=Codex
 description=ColorOS 17 LSPosed SystemUI hook. Miuix / KernelSU style settings UI with a liquid-glass navigation bar.
 minMagisk=24000

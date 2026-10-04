@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Base64
 
 plugins {
     id("com.android.application") version "9.4.1"
@@ -16,8 +17,8 @@ android {
         applicationId = "com.iosbar.navhook"
         minSdk = 36
         targetSdk = 37
-        versionCode = 10
-        versionName = "0.6.0"
+        versionCode = 11
+        versionName = "0.6.1"
     }
 
     sourceSets["main"].apply {
@@ -32,9 +33,35 @@ android {
         resources.directories.add("resources")
     }
 
+    // 发布签名：沿用慕容调度那套 keystore（别名 慕容调度），两个模块的更新因此可以互相覆盖安装。
+    // CI 从 KEYSTORE_BASE64（GitHub Secrets）解码出 release.jks，本地直接用 src/hook/release.jks
+    // （已被 .gitignore 排除）。缺少签名材料时构建会直接失败，而不是悄悄产出未签名的包。
+    signingConfigs {
+        create("release") {
+            val ksFile = file("release.jks")
+            val encoded = (findProperty("KEYSTORE_BASE64") as String?) ?: System.getenv("KEYSTORE_BASE64")
+            if (!encoded.isNullOrBlank()) {
+                val clean = encoded.replace(
+                    Regex("-----BEGIN CERTIFICATE-----|-----END CERTIFICATE-----|[\\r\\n]"),
+                    "",
+                )
+                ksFile.parentFile?.mkdirs()
+                ksFile.writeBytes(Base64.getDecoder().decode(clean))
+            }
+            storeFile = ksFile
+            storePassword = (findProperty("STORE_PASSWORD") as String?) ?: System.getenv("STORE_PASSWORD") ?: ""
+            keyAlias = "慕容调度"
+            keyPassword = (findProperty("KEY_PASSWORD") as String?) ?: System.getenv("KEY_PASSWORD") ?: ""
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
