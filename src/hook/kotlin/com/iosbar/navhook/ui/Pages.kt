@@ -168,7 +168,7 @@ internal fun LazyListScope.homePage(
 
     item {
         SettingsCard {
-            KeyValueRow("模块版本", "0.6.0 (10)")
+            KeyValueRow("模块版本", moduleVersionText())
             InsetDivider(16.dp)
             KeyValueRow("LSPosed", "API 102 · 2.1.1-it")
             InsetDivider(16.dp)
@@ -216,7 +216,7 @@ private fun StatusCard(state: SettingsState, dark: Boolean) {
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    text = "版本：0.6.0 (10)",
+                    text = "版本：" + moduleVersionText(),
                     fontSize = 13.sp,
                     color = content.copy(alpha = 0.78f),
                 )
@@ -943,13 +943,16 @@ internal fun UpdateCard(accentColor: Color) {
     var info by remember { mutableStateOf<UpdateInfo?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    val hasUpdate = info != null && info!!.versionCode > ModuleInfo.VERSION_CODE
+    val hasUpdate = info != null && info!!.versionCode.toLong() > ModuleInfo.versionCode(context)
 
     SettingsCard {
         Column(modifier = Modifier.padding(20.dp)) {
             CardTitle("版本与更新", accentColor)
             Spacer(Modifier.height(12.dp))
-            KeyValueRow("当前版本", ModuleInfo.VERSION_NAME + " (" + ModuleInfo.VERSION_CODE + ")")
+            KeyValueRow(
+                "当前版本",
+                ModuleInfo.versionName(context) + " (" + ModuleInfo.versionCode(context) + ")",
+            )
             InsetDivider(16.dp)
             KeyValueRow(
                 label = "最新版本",
@@ -977,7 +980,7 @@ internal fun UpdateCard(accentColor: Color) {
                         result
                             .onSuccess { latest ->
                                 info = latest
-                                if (latest.versionCode <= ModuleInfo.VERSION_CODE) {
+                                if (latest.versionCode.toLong() <= ModuleInfo.versionCode(context)) {
                                     Toast.makeText(context, "当前已经是最新版", Toast.LENGTH_SHORT).show()
                                 }
                             }
@@ -1091,9 +1094,17 @@ private const val MODULE_DESC =
     "面向 Android 16/17（ColorOS 16/17）的单 APK LSPosed 模块。它只向 com.android.systemui " +
         "注入 Hook，不替换 framework、SystemUI 或导航模式 RRO，因此不会破坏显示模块的资源映射。"
 
-private fun buildDiagnostics(): String = buildString {
+/** 首页状态卡与「模块版本」行共用的版本文本，统一走 PackageManager，避免再有漏改的硬编码。 */
+@Composable
+private fun moduleVersionText(): String {
+    val context = LocalContext.current
+    return ModuleInfo.versionName(context) + " (" + ModuleInfo.versionCode(context) + ")"
+}
+
+private fun buildDiagnostics(context: Context): String = buildString {
     append("模块: ").append(MODULE_NAME).append('\n')
-    append("版本: ").append(ModuleInfo.VERSION_NAME).append(" (").append(ModuleInfo.VERSION_CODE).append(")").append('\n')
+    append("版本: ").append(ModuleInfo.versionName(context)).append(" (")
+        .append(ModuleInfo.versionCode(context)).append(")").append('\n')
     append("框架: ").append(ModuleInfo.XPosed_API).append(" (2.1.1-it)").append('\n')
     append("作用域: com.android.systemui").append('\n')
     append("设备: ").append(Build.MODEL).append('\n')
@@ -1164,7 +1175,7 @@ internal fun LazyListScope.aboutPage(
                         text = "复制版本信息",
                         accent = accentColor,
                         modifier = Modifier.weight(1f),
-                        onClick = { copyToClipboard(context, "版本信息", buildDiagnostics()) },
+                        onClick = { copyToClipboard(context, "版本信息", buildDiagnostics(context)) },
                     )
                 }
                 Spacer(Modifier.height(10.dp))
@@ -1230,7 +1241,7 @@ internal fun LazyListScope.aboutPage(
                     text = "复制诊断信息",
                     accent = accentColor,
                     modifier = Modifier.fillMaxWidth(),
-                    onClick = { copyToClipboard(context, "诊断信息", buildDiagnostics()) },
+                    onClick = { copyToClipboard(context, "诊断信息", buildDiagnostics(context)) },
                 )
             }
         }

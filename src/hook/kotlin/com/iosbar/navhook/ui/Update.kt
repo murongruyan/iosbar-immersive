@@ -3,6 +3,7 @@ package com.iosbar.navhook.ui
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.Dispatchers
@@ -11,12 +12,29 @@ import org.json.JSONObject
 
 /** Single source of truth for the module identity shown in the UI and used by the updater. */
 object ModuleInfo {
-    const val VERSION_NAME = "0.6.0"
-    const val VERSION_CODE = 10
     const val HOMEPAGE = "https://github.com/murongruyan/iosbar-immersive"
     const val UPDATE_JSON_URL =
         "https://raw.githubusercontent.com/murongruyan/iosbar-immersive/master/update.json"
     const val XPosed_API = "LSPosed API 102"
+    const val USER_AGENT = "iosbar-navhook"
+
+    /**
+     * 版本号从 PackageManager 读，不再硬编码：这里曾写死 0.6.0/10，发到 0.6.1 之后关于页仍显示旧版本，
+     * 「检查更新」也会把新版本误判成"已是最新"。
+     */
+    fun versionName(context: Context): String = runCatching {
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName
+    }.getOrNull() ?: "?"
+
+    fun versionCode(context: Context): Long = runCatching {
+        val info = context.packageManager.getPackageInfo(context.packageName, 0)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.longVersionCode
+        } else {
+            @Suppress("DEPRECATION")
+            info.versionCode.toLong()
+        }
+    }.getOrNull() ?: 0L
 }
 
 /** KernelSU style update manifest, hosted at the repo root as update.json. */
@@ -36,7 +54,7 @@ internal fun fetchUpdateInfo(timeoutMillis: Int = 8000): UpdateInfo {
         requestMethod = "GET"
         instanceFollowRedirects = true
         setRequestProperty("Accept", "application/json")
-        setRequestProperty("User-Agent", "iosbar-navhook/" + ModuleInfo.VERSION_NAME)
+        setRequestProperty("User-Agent", ModuleInfo.USER_AGENT)
     }
     return try {
         val code = connection.responseCode

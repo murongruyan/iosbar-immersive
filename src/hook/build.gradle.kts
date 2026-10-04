@@ -17,8 +17,8 @@ android {
         applicationId = "com.iosbar.navhook"
         minSdk = 36
         targetSdk = 37
-        versionCode = 11
-        versionName = "0.6.1"
+        versionCode = 12
+        versionName = "0.6.2"
     }
 
     sourceSets["main"].apply {
@@ -60,7 +60,14 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // DEX 占了包里 24.5/24.8 MB，全是 Compose / Miuix / Backdrop 里没用上的代码。
+            // R8 keep 规则见 proguard-rules.pro（入口类必须保名）。
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
             signingConfig = signingConfigs.getByName("release")
         }
     }

@@ -50,8 +50,8 @@ if ($scope.Count -ne 1 -or $scope[0].Trim() -ne 'com.android.systemui') {
 
 # module.prop is stored with CRLF endings, so a multiline `^...$` anchor never matches it as-is.
 $moduleProp = (Get-Content -Raw (Join-Path $root 'module.prop')) -replace "`r`n", "`n"
-if ($moduleProp -notmatch '(?m)^version=0\.6\.1$' -or $moduleProp -notmatch '(?m)^versionCode=11$') {
-  throw 'module.prop must describe v0.6.1 (versionCode 11)'
+if ($moduleProp -notmatch '(?m)^version=0\.6\.2$' -or $moduleProp -notmatch '(?m)^versionCode=12$') {
+  throw 'module.prop must describe v0.6.2 (versionCode 12)'
 }
 
 $hook = Get-Content -Raw (Join-Path $root 'src/hook/java/com/iosbar/navhook/IosBarHook.java')

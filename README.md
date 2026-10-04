@@ -59,7 +59,7 @@
   {
     "version": "0.6.0",
     "versionCode": 10,
-    "zipUrl": "https://github.com/murongruyan/iosbar-immersive/releases/download/v0.6.0/iosbar-navhook-v0.6.1.apk",
+    "zipUrl": "https://github.com/murongruyan/iosbar-immersive/releases/download/v0.6.0/iosbar-navhook-v0.6.2.apk",
     "changelog": "https://raw.githubusercontent.com/murongruyan/iosbar-immersive/master/UPDATE.md",
     "homepage": "https://github.com/murongruyan/iosbar-immersive"
   }
@@ -92,9 +92,9 @@ ColorOS 17 SystemUI 原生参数：
 ## 安装
 
 1. 设备已安装 LSPosed API 102（当前验证版本：LSPosed 2.1.1-it）。
-2. 直接安装 `iosbar-navhook-v0.6.1.apk`：
+2. 直接安装 `iosbar-navhook-v0.6.2.apk`：
    ```powershell
-   adb install -r .\dist\iosbar-navhook-v0.6.1.apk
+   adb install -r .\dist\iosbar-navhook-v0.6.2.apk
    ```
    也可以从文件管理器点击 APK 安装。
 3. 打开应用 `iOS 沉浸式小横条`，按需要调整参数；可点击“保存当前参数”或“备份当前参数”。
@@ -128,7 +128,7 @@ legacy 打包脚本，但 v0.6.0 的主发布物是 APK。
 输出：
 
 ```text
-dist/iosbar-navhook-v0.6.1.apk
+dist/iosbar-navhook-v0.6.2.apk
 ```
 
 旧版 KernelSU/Magisk ZIP 可继续使用：
