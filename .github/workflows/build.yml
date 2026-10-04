@@ -21,11 +21,25 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Set up Android SDK 37
-        uses: android-actions/setup-android@v3
+      # The runner image already ships cmdline-tools; android-actions/setup-android now dies on
+      # `sdkmanager tools` (Google removed that package), so the platform packages are installed
+      # straight from the preinstalled SDK instead.
       - name: Install Android SDK 37
         shell: bash
-        run: sdkmanager "platforms;android-37.0" "platforms;android-37.1" "build-tools;37.0.0" "platform-tools"
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          MANAGER="$(ls -d "$SDK"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | tail -1)"
+          if [ -z "$MANAGER" ]; then
+            echo "sdkmanager not found under $SDK" >&2
+            exit 1
+          fi
+          echo "Using sdkmanager: $MANAGER"
+          yes | "$MANAGER" --licenses >/dev/null 2>&1 || true
+          PACKAGES=(platform-tools "platforms;android-37.0" "platforms;android-37.1" "build-tools;37.0.0")
+          "$MANAGER" "${PACKAGES[@]}" || "$MANAGER" --channel=3 "${PACKAGES[@]}"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
 
       - name: Set up Gradle 9.7.1
         uses: gradle/actions/setup-gradle@v4
