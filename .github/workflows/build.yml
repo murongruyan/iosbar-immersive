@@ -15,26 +15,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
-      - name: Set up Android SDK 36
+      - name: Set up Android SDK 37
         uses: android-actions/setup-android@v3
-      - name: Install Android SDK 36
+      - name: Install Android SDK 37
         shell: bash
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+        run: sdkmanager "platforms;android-37.0" "platforms;android-37.1" "build-tools;37.0.0" "platform-tools"
 
-      - name: Set up Gradle 9.5.1
+      - name: Set up Gradle 9.7.1
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '9.5.1'
+          gradle-version: '9.7.1'
 
-      - name: Build and verify module
+      - name: Build and verify LSPosed APK
         shell: pwsh
-        run: ./build_module.ps1 -OutputDirectory "$env:GITHUB_WORKSPACE/dist"
+        run: ./build_apk.ps1 -OutputDirectory "$env:GITHUB_WORKSPACE/dist"
 
       - name: Extract current update notes
         shell: pwsh
@@ -47,15 +47,15 @@ jobs:
           Set-Content -Path release-notes.md -Value $match.Groups['body'].Value.Trim() -Encoding utf8
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Upload ZIP artifact
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: iosbar-immersive-v${{ env.VERSION }}
-          path: dist/*.zip
+          name: iosbar-navhook-v${{ env.VERSION }}
+          path: dist/*.apk
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           body_path: release-notes.md
-          files: dist/*.zip
+          files: dist/*.apk

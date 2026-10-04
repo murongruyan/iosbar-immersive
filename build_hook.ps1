@@ -3,6 +3,12 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $source = Join-Path $root 'src\hook'
 $temp = Join-Path ([System.IO.Path]::GetTempPath()) ("iosbar-hook-build-" + [guid]::NewGuid().ToString('N'))
 
+if (-not $env:JAVA_HOME) {
+  $jdk21 = Get-ChildItem 'C:\Program Files\Eclipse Adoptium' -Directory -Filter 'jdk-21*' -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+  if ($jdk21) { $env:JAVA_HOME = $jdk21.FullName }
+}
+
 $gradle = $null
 if ($env:GRADLE_BIN -and (Test-Path -LiteralPath $env:GRADLE_BIN)) {
   $gradle = $env:GRADLE_BIN
@@ -18,11 +24,12 @@ if ($env:GRADLE_BIN -and (Test-Path -LiteralPath $env:GRADLE_BIN)) {
 }
 if (-not $gradle) {
   $knownGradle = Get-ChildItem -Path (Join-Path $env:USERPROFILE '.gradle\wrapper\dists') -Filter gradle.bat -Recurse -ErrorAction SilentlyContinue |
-    Where-Object { $_.FullName -match 'gradle-9\.5(?:\.0)?' } |
+    Where-Object { $_.FullName -match 'gradle-9\.(?:[6-9]|1[0-9])' } |
+    Sort-Object FullName -Descending |
     Select-Object -First 1
   if ($knownGradle) { $gradle = $knownGradle.FullName }
 }
-if (-not $gradle) { throw 'Gradle 9.5.1 is required. Set GRADLE_BIN or put gradle on PATH.' }
+if (-not $gradle) { throw 'Gradle 9.6+ is required. Set GRADLE_BIN or put gradle on PATH.' }
 
 $sdk = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } elseif ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { $null }
 if (-not $sdk) {
@@ -33,7 +40,7 @@ if (-not $sdk) {
   }
 }
 if (-not $sdk -or -not (Test-Path -LiteralPath $sdk)) {
-  throw 'Android SDK 36 is required. Set ANDROID_HOME or ANDROID_SDK_ROOT.'
+  throw 'Android SDK 37 is required. Set ANDROID_HOME or ANDROID_SDK_ROOT.'
 }
 
 New-Item -ItemType Directory -Force -Path $temp | Out-Null

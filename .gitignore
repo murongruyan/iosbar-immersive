@@ -3,3 +3,5 @@ release-notes.md
 src/hook/.gradle/
 src/hook/build/
 src/hook/.kotlin/
+work/
+.reasonix/

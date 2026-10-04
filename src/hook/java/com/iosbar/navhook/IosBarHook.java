@@ -1,13 +1,23 @@
 package com.iosbar.navhook;
 
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.content.res.Configuration;
+import android.content.res.Resources;
+import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.Insets;
+import android.graphics.Paint;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
+import android.view.View;
 import android.view.WindowInsets;
 
 import java.lang.reflect.Array;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Set;
 import java.util.WeakHashMap;
@@ -16,8 +26,12 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedModule;
 
 /**
- * Removes only the layout/navigation-bar inset from SystemUI's bar providers,
- * then adjusts the OEM handle geometry while preserving all gesture providers.
+ * ColorOS 16/17 SystemUI hook.
+ *
+ * <p>ColorOS 17 made the OEM handle geometry fields final. This implementation deliberately
+ * avoids mutating those fields: it intercepts the handle draw pass and renders the same
+ * rounded rectangle with the user's dimensions and color. Width is applied through the
+ * vendor getGestureWidthRes(String) method so the navigation bar layout remains correct.</p>
  */
 public final class IosBarHook extends XposedModule {
     private static final String TAG = "IosBarHook";
@@ -28,22 +42,32 @@ public final class IosBarHook extends XposedModule {
             "com.oplus.systemui.navigationbar.gesture.sidegesture.OplusNavigationHandle";
     private static final String NAVIGATION_TRANSITIONS =
             "com.android.systemui.navigationbar.views.NavigationBarTransitions";
-    private static final float HANDLE_HEIGHT_DP = 6.4f;
-    private static final float HANDLE_BOTTOM_DP = 14.0f;
-    private static final float HANDLE_WIDTH_DP = 180.0f;
+    private static final String PORTRAIT_WIDTH_RES =
+            "navigation_gesture_view_width";
+    private static final String LANDSCAPE_WIDTH_RES =
+            "navigation_gesture_view_landscape_width";
     private static final int NAVIGATION_BARS = WindowInsets.Type.navigationBars();
-    private static final Set<Object> geometryApplied =
-            Collections.newSetFromMap(new WeakHashMap<>());
+
+    private static final Set<View> handleViews =
+            Collections.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<View, Boolean>()));
     private static volatile boolean installed;
-    private static volatile boolean handleDiagnosticsInstalled;
-    private static volatile boolean handleLifecycleInstalled;
     private static volatile boolean transitionsInstalled;
+    private static volatile boolean handleHooksInstalled;
+    private static volatile boolean diagnosticsLogged;
+    private static volatile boolean insetLogLogged;
+    private static volatile boolean scrimLogLogged;
     private static volatile boolean landscapeLayoutLogged;
-    private static volatile boolean logged;
+
+    private volatile SharedPreferences remotePreferences;
+    private volatile BarConfig config = BarConfig.defaults();
+    private volatile long configRevision = Long.MIN_VALUE;
+    private volatile boolean remotePrefsWarned;
 
     @Override
     public void onModuleLoaded(ModuleLoadedParam param) {
         log(Log.INFO, "loaded process=" + param.getProcessName());
+        ensureRemotePreferences();
+        reloadConfig(true);
     }
 
     @Override
@@ -54,6 +78,7 @@ public final class IosBarHook extends XposedModule {
             return;
         }
         try {
+            reloadConfig(true);
             install(param.getClassLoader());
         } catch (Throwable error) {
             log(Log.ERROR, "SystemUI hook initialization failed", error);
@@ -64,6 +89,14 @@ public final class IosBarHook extends XposedModule {
         if (installed) {
             return;
         }
+        installNavigationBarHook(loader);
+        installNavigationTransitionsHook(loader);
+        installOplusHandleHooks(loader);
+        installed = true;
+        log(Log.INFO, "installed SystemUI hook set for ColorOS 16/17");
+    }
+
+    private void installNavigationBarHook(ClassLoader loader) throws Throwable {
         Class<?> owner = Class.forName(NAVIGATION_BAR, false, loader);
         int count = 0;
         for (Method method : owner.getDeclaredMethods()) {
@@ -79,8 +112,13 @@ public final class IosBarHook extends XposedModule {
                     .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
                     .intercept(chain -> {
                         Object result = chain.proceed();
-                        normalizeLandscapeLayoutParams(result, readRotation(chain), chain.getThisObject());
-                        normalizeProvidedInsets(result);
+                        BarConfig snapshot = config;
+                        if (snapshot.enabled) {
+                            normalizeLandscapeLayoutParams(result, readRotation(chain));
+                            if (snapshot.immersive) {
+                                normalizeProvidedInsets(result);
+                            }
+                        }
                         return result;
                     });
             count++;
@@ -88,19 +126,14 @@ public final class IosBarHook extends XposedModule {
         if (count == 0) {
             throw new NoSuchMethodException(NAVIGATION_BAR + ".getBarLayoutParamsForRotation");
         }
-        installNavigationTransitions(loader);
-        installHandleDiagnostics(loader);
-        installed = true;
         log(Log.INFO, "installed NavigationBar inset hook methods=" + count);
     }
 
     /**
-     * The OEM landscape bar uses a full-screen buffer while transient bars are
-     * shown. Keep the handle, but remove only the scrim selected by
-     * MODE_SEMI_TRANSPARENT. This avoids replacing framework resources or the
-     * navigation-mode overlay, both of which can invalidate resource mappings.
+     * The OEM landscape bar uses a full-screen buffer while transient bars are shown. Keep the
+     * handle, but remove only the scrim selected by MODE_SEMI_TRANSPARENT.
      */
-    private void installNavigationTransitions(ClassLoader loader) {
+    private void installNavigationTransitionsHook(ClassLoader loader) {
         if (transitionsInstalled) {
             return;
         }
@@ -120,8 +153,12 @@ public final class IosBarHook extends XposedModule {
                         .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
                         .intercept(chain -> {
                             Object result = chain.proceed();
-                            if (clearSemiTransparent(result)) {
-                                log(Log.INFO, "transient navigation scrim disabled");
+                            BarConfig snapshot = config;
+                            if (snapshot.enabled && snapshot.removeScrim && clearSemiTransparent(result)) {
+                                if (!scrimLogLogged) {
+                                    scrimLogLogged = true;
+                                    log(Log.INFO, "transient navigation scrim disabled");
+                                }
                             }
                             return result;
                         });
@@ -135,6 +172,221 @@ public final class IosBarHook extends XposedModule {
             }
         } catch (Throwable error) {
             log(Log.WARN, "NavigationBarTransitions hook unavailable", error);
+        }
+    }
+
+    private void installOplusHandleHooks(ClassLoader loader) {
+        if (handleHooksInstalled) {
+            return;
+        }
+        try {
+            Class<?> handle = Class.forName(OPLUS_HANDLE, false, loader);
+            installHandleConstructorHook(handle);
+            installHandleWidthHook(handle);
+            installHandleDrawHook(handle);
+            installHandleAttachHook(handle);
+            handleHooksInstalled = true;
+            log(Log.INFO, "installed OplusNavigationHandle hooks");
+        } catch (Throwable error) {
+            log(Log.WARN, "OplusNavigationHandle hook unavailable", error);
+        }
+    }
+
+    private void installHandleConstructorHook(Class<?> handle) throws Throwable {
+        Constructor<?> constructor = handle.getDeclaredConstructor(Context.class, android.util.AttributeSet.class);
+        constructor.setAccessible(true);
+        hook(constructor)
+                .setId("navigation.handle.constructor")
+                .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                .intercept(chain -> {
+                    Object result = chain.proceed();
+                    if (result instanceof View) {
+                        registerHandle((View) result);
+                    }
+                    return result;
+                });
+    }
+
+    private void installHandleWidthHook(Class<?> handle) throws Throwable {
+        Method widthMethod = handle.getDeclaredMethod("getGestureWidthRes", String.class);
+        widthMethod.setAccessible(true);
+        hook(widthMethod)
+                .setId("navigation.handle.width")
+                .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                .intercept(chain -> {
+                    Object receiver = chain.getThisObject();
+                    Object argument = chain.getArg(0);
+                    BarConfig snapshot = config;
+                    if (snapshot.enabled && receiver instanceof View && argument instanceof String) {
+                        String resourceName = (String) argument;
+                        float widthDp = LANDSCAPE_WIDTH_RES.equals(resourceName)
+                                ? snapshot.widthLandscapeDp
+                                : snapshot.widthPortraitDp;
+                        if (widthDp > 0f) {
+                            View view = (View) receiver;
+                            return BarConfig.dpToPx(widthDp, view.getResources().getDisplayMetrics());
+                        }
+                    }
+                    return chain.proceed();
+                });
+    }
+
+    private void installHandleDrawHook(Class<?> handle) throws Throwable {
+        Method onDraw = handle.getDeclaredMethod("onDraw", Canvas.class);
+        onDraw.setAccessible(true);
+        hook(onDraw)
+                .setId("navigation.handle.draw")
+                .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                .intercept(chain -> {
+                    Object receiver = chain.getThisObject();
+                    Object canvasArgument = chain.getArg(0);
+                    if (!(receiver instanceof View) || !(canvasArgument instanceof Canvas)) {
+                        return chain.proceed();
+                    }
+                    View view = (View) receiver;
+                    registerHandle(view);
+                    BarConfig snapshot = config;
+                    if (!snapshot.enabled) {
+                        return chain.proceed();
+                    }
+                    if (drawCustomHandle(view, (Canvas) canvasArgument, snapshot)) {
+                        return null;
+                    }
+                    return chain.proceed();
+                });
+    }
+
+    private void installHandleAttachHook(Class<?> handle) throws Throwable {
+        Method attached = handle.getDeclaredMethod("onAttachedToWindow");
+        attached.setAccessible(true);
+        hook(attached)
+                .setId("navigation.handle.attach")
+                .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                .intercept(chain -> {
+                    Object result = chain.proceed();
+                    if (chain.getThisObject() instanceof View) {
+                        registerHandle((View) chain.getThisObject());
+                    }
+                    return result;
+                });
+    }
+
+    private boolean drawCustomHandle(View view, Canvas canvas, BarConfig snapshot) {
+        try {
+            Paint paint = readPaint(view);
+            if (paint == null) {
+                return false;
+            }
+            int viewWidth = view.getWidth();
+            int viewHeight = view.getHeight();
+            if (viewWidth <= 0 || viewHeight <= 0) {
+                return false;
+            }
+
+            boolean landscape = view.getResources().getConfiguration().orientation
+                    == Configuration.ORIENTATION_LANDSCAPE;
+            float density = view.getResources().getDisplayMetrics().density;
+            float height = snapshot.heightDp > 0f
+                    ? snapshot.heightDp * density
+                    : readIntField(view, "mHeight", Math.round(4f * density));
+            float bottom = snapshot.bottomDp >= 0f
+                    ? snapshot.bottomDp * density
+                    : readIntField(view, "mHandleBottom", Math.round(7f * density));
+            float radius = snapshot.radiusDp >= 0f
+                    ? snapshot.radiusDp * density
+                    : Math.max(1f, height / 2f);
+
+            float extraHeight = readFloatField(view, "mAdditionalHeightForAnimation", 0f)
+                    * readFloatField(view, "longPressAnimProgress", 0f);
+            float currentHeight = Math.max(1f, height + extraHeight);
+            if (bottom + currentHeight > viewHeight) {
+                bottom = Math.max(0f, viewHeight - currentHeight);
+            }
+            float bottomY = viewHeight - bottom;
+            float topY = bottomY - currentHeight;
+            float radiusScale = currentHeight / Math.max(1f, height);
+            float cornerRadius = Math.max(1f, radius * radiusScale);
+
+            float widthDp = landscape ? snapshot.widthLandscapeDp : snapshot.widthPortraitDp;
+            float requestedWidth = widthDp > 0f ? widthDp * density : viewWidth;
+            float handleWidth = Math.max(1f, Math.min(viewWidth, requestedWidth));
+            float left = (viewWidth - handleWidth) / 2f;
+            float right = left + handleWidth;
+
+            int originalColor = paint.getColor();
+            paint.setColor(resolveColor(snapshot, originalColor));
+            canvas.save();
+            try {
+                canvas.clipRect(left, topY, right, bottomY);
+                canvas.drawRoundRect(left, topY, right, bottomY, cornerRadius, cornerRadius, paint);
+            } finally {
+                paint.setColor(originalColor);
+                canvas.restore();
+            }
+
+            if (!diagnosticsLogged) {
+                diagnosticsLogged = true;
+                log(Log.INFO, "custom handle draw width=" + handleWidth
+                        + " height=" + currentHeight
+                        + " bottom=" + bottom
+                        + " radius=" + cornerRadius
+                        + " alpha=" + snapshot.alphaPercent
+                        + " colorMode=" + snapshot.colorMode);
+            }
+            return true;
+        } catch (Throwable error) {
+            log(Log.WARN, "custom handle draw failed", error);
+            return false;
+        }
+    }
+
+    private static int resolveColor(BarConfig snapshot, int originalColor) {
+        int baseColor;
+        switch (snapshot.colorMode) {
+            case BarConfig.COLOR_WHITE:
+                baseColor = Color.WHITE;
+                break;
+            case BarConfig.COLOR_BLACK:
+                baseColor = Color.BLACK;
+                break;
+            case BarConfig.COLOR_CUSTOM:
+                baseColor = snapshot.customColor;
+                break;
+            case BarConfig.COLOR_AUTO:
+            default:
+                baseColor = originalColor;
+                break;
+        }
+        int baseAlpha = Color.alpha(baseColor);
+        int finalAlpha = Math.round(snapshot.alpha() * (baseAlpha / 255f));
+        return Color.argb(finalAlpha, Color.red(baseColor), Color.green(baseColor), Color.blue(baseColor));
+    }
+
+    private void registerHandle(View view) {
+        handleViews.add(view);
+    }
+
+    private void normalizeLandscapeLayoutParams(Object layoutParams, int rotation) {
+        if (layoutParams == null || (rotation != 1 && rotation != 3)) {
+            return;
+        }
+        boolean widthChanged = setIntField(layoutParams, "width", -1);
+        boolean heightChanged = setIntField(layoutParams, "height", -2);
+        boolean gravityChanged = setIntField(layoutParams, "gravity",
+                android.view.Gravity.BOTTOM | android.view.Gravity.CENTER_HORIZONTAL);
+        if ((widthChanged || heightChanged || gravityChanged) && !landscapeLayoutLogged) {
+            landscapeLayoutLogged = true;
+            log(Log.INFO, "landscape NavigationBar window normalized to bottom-center"
+                    + " width=-1 height=wrap_content rotation=" + rotation);
+        }
+    }
+
+    private static int readRotation(XposedInterface.Chain chain) {
+        try {
+            Object value = chain.getArg(0);
+            return value instanceof Number ? ((Number) value).intValue() : -1;
+        } catch (Throwable ignored) {
+            return -1;
         }
     }
 
@@ -159,129 +411,43 @@ public final class IosBarHook extends XposedModule {
         }
     }
 
-    private void normalizeLandscapeLayoutParams(Object layoutParams, int rotation, Object owner) {
-        if (layoutParams == null || (rotation != 1 && rotation != 3)) {
-            return;
-        }
-        boolean widthChanged = setIntField(layoutParams, "width", -1);
-        // Let the handle view determine its own height. A fixed landscape frame
-        // leaves a large transparent navigation window around the visible bar.
-        boolean heightChanged = setIntField(layoutParams, "height", -2);
-        boolean gravityChanged = setIntField(layoutParams, "gravity",
-                android.view.Gravity.BOTTOM | android.view.Gravity.CENTER_HORIZONTAL);
-        if ((widthChanged || heightChanged || gravityChanged) && !landscapeLayoutLogged) {
-            landscapeLayoutLogged = true;
-            log(Log.INFO, "landscape NavigationBar window normalized to bottom-center"
-                    + " width=-1 height=wrap_content rotation=" + rotation);
-        }
-    }
-
-    private static int readRotation(XposedInterface.Chain chain) {
+    private static Paint readPaint(Object receiver) {
         try {
-            Object value = chain.getArg(0);
-            return value instanceof Number ? ((Number) value).intValue() : -1;
+            Field field = findField(receiver.getClass(), "mPaint");
+            if (field == null) {
+                return null;
+            }
+            field.setAccessible(true);
+            Object value = field.get(receiver);
+            return value instanceof Paint ? (Paint) value : null;
         } catch (Throwable ignored) {
-            return -1;
+            return null;
         }
     }
 
-    private void installHandleDiagnostics(ClassLoader loader) {
-        if (handleDiagnosticsInstalled) {
-            return;
-        }
+    private static int readIntField(Object receiver, String name, int fallback) {
         try {
-            Class<?> handle = Class.forName(OPLUS_HANDLE, false, loader);
-            Method onDraw = handle.getDeclaredMethod("onDraw", android.graphics.Canvas.class);
-            onDraw.setAccessible(true);
-            hook(onDraw)
-                    .setId("navigation.handle.geometry")
-                    .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
-                    .intercept(chain -> {
-                        Object receiver = chain.getThisObject();
-                        int viewHeight = readViewHeight(receiver);
-                        int viewWidth = readViewWidth(receiver);
-                        if (markGeometryApplied(receiver)) {
-                            applyHandleGeometry(receiver);
-                        }
-                        if (!handleDiagnosticsInstalled) {
-                            handleDiagnosticsInstalled = true;
-                            log(Log.INFO, "OplusNavigationHandle geometry "
-                                    + "height=" + readIntField(receiver, "mHeight")
-                                    + " bottom=" + readIntField(receiver, "mHandleBottom")
-                                    + " radius=" + readIntField(receiver, "mRadius")
-                                    + " viewHeight=" + viewHeight
-                                    + " viewWidth=" + viewWidth
-                                    + " resources=" + readHandleResources(receiver));
-                        }
-                        return chain.proceed();
-                    });
-            installHandleLifecycleHooks(handle);
-        } catch (Throwable error) {
-            log(Log.WARN, "OplusNavigationHandle diagnostics unavailable", error);
-        }
-    }
-
-    /**
-     * The vendor view recalculates its dimensions after attachment, rotation, and orientation
-     * changes. Re-apply only after those lifecycle methods return so the OEM draw path stays intact.
-     */
-    private void installHandleLifecycleHooks(Class<?> handle) {
-        if (handleLifecycleInstalled) {
-            return;
-        }
-        int count = 0;
-        for (Method method : handle.getDeclaredMethods()) {
-            String name = method.getName();
-            if (!("onAttachedToWindow".equals(name)
-                    || "onLayout".equals(name)
-                    || "setVertical".equals(name))) {
-                continue;
+            Field field = findField(receiver.getClass(), name);
+            if (field == null) {
+                return fallback;
             }
-            method.setAccessible(true);
-            hook(method)
-                    .setId("navigation.handle.geometry.lifecycle")
-                    .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
-                    .intercept(chain -> {
-                        Object result = chain.proceed();
-                        applyHandleGeometry(chain.getThisObject());
-                        return result;
-                    });
-            count++;
-        }
-        handleLifecycleInstalled = true;
-        log(Log.INFO, "installed OplusNavigationHandle lifecycle hooks=" + count);
-    }
-
-    private static boolean markGeometryApplied(Object receiver) {
-        synchronized (geometryApplied) {
-            return geometryApplied.add(receiver);
+            field.setAccessible(true);
+            return field.getInt(receiver);
+        } catch (Throwable ignored) {
+            return fallback;
         }
     }
 
-    private void applyHandleGeometry(Object receiver) {
+    private static float readFloatField(Object receiver, String name, float fallback) {
         try {
-            android.view.View view = (android.view.View) receiver;
-            float density = view.getResources().getDisplayMetrics().density;
-            int height = Math.max(1, Math.round(HANDLE_HEIGHT_DP * density));
-            int bottom = Math.max(1, Math.round(HANDLE_BOTTOM_DP * density));
-            int width = Math.max(1, Math.round(HANDLE_WIDTH_DP * density));
-            int viewHeight = view.getHeight();
-            if (viewHeight > 0) {
-                height = Math.min(height, Math.max(1, viewHeight - bottom));
+            Field field = findField(receiver.getClass(), name);
+            if (field == null) {
+                return fallback;
             }
-            int radius = Math.max(1, height / 2);
-            boolean changed = setIntField(receiver, "mHeight", height);
-            changed |= setIntField(receiver, "mHandleBottom", bottom);
-            changed |= setIntField(receiver, "mRadius", radius);
-            changed |= setIntField(receiver, "mPortraitWidth", width);
-            changed |= setIntField(receiver, "mLandscapeWidth", width);
-            if (changed) {
-                log(Log.INFO, "applied handle geometry width=" + width
-                        + " height=" + height + " bottom=" + bottom + " radius=" + radius
-                        + " density=" + density);
-            }
-        } catch (Throwable error) {
-            log(Log.WARN, "portrait handle geometry apply failed", error);
+            field.setAccessible(true);
+            return field.getFloat(receiver);
+        } catch (Throwable ignored) {
+            return fallback;
         }
     }
 
@@ -302,75 +468,12 @@ public final class IosBarHook extends XposedModule {
         }
     }
 
-    private static int readIntField(Object receiver, String name) {
-        try {
-            Field field = findField(receiver.getClass(), name);
-            if (field == null) {
-                return Integer.MIN_VALUE;
-            }
-            field.setAccessible(true);
-            return field.getInt(receiver);
-        } catch (Throwable ignored) {
-            return Integer.MIN_VALUE;
-        }
-    }
-
-    private static int readViewHeight(Object receiver) {
-        try {
-            Method method = findNoArgMethod(receiver.getClass(), "getHeight");
-            if (method != null) {
-                method.setAccessible(true);
-                return ((Number) method.invoke(receiver)).intValue();
-            }
-        } catch (Throwable ignored) {
-        }
-        return Integer.MIN_VALUE;
-    }
-
-    private static int readViewWidth(Object receiver) {
-        try {
-            Method method = findNoArgMethod(receiver.getClass(), "getWidth");
-            if (method != null) {
-                method.setAccessible(true);
-                return ((Number) method.invoke(receiver)).intValue();
-            }
-        } catch (Throwable ignored) {
-        }
-        return Integer.MIN_VALUE;
-    }
-
-    private static String readHandleResources(Object receiver) {
-        try {
-            android.view.View view = (android.view.View) receiver;
-            android.content.res.Resources resources = view.getResources();
-            String paths = "unknown";
-            try {
-                Method getApkPaths = resources.getAssets().getClass().getDeclaredMethod("getApkPaths");
-                getApkPaths.setAccessible(true);
-                Object value = getApkPaths.invoke(resources.getAssets());
-                paths = value instanceof String[] ? Arrays.toString((String[]) value) : String.valueOf(value);
-            } catch (Throwable ignored) {
-            }
-            return "height=" + resources.getDimension(0x7f0712ce)
-                    + ",bottom=" + resources.getDimension(0x7f0712cb)
-                    + ",radius=" + resources.getDimension(0x7f0712d0)
-                    + ",width=" + resources.getDimension(0x7f0712d8)
-                    + ",apkPaths=" + paths;
-        } catch (Throwable error) {
-            return "unavailable";
-        }
-    }
-
     private void normalizeProvidedInsets(Object layoutParams) throws Throwable {
         if (layoutParams == null) {
             return;
         }
         Field provided = findField(layoutParams.getClass(), "providedInsets");
         if (provided == null) {
-            if (!logged) {
-                logged = true;
-                log(Log.WARN, "LayoutParams.providedInsets is unavailable");
-            }
             return;
         }
         provided.setAccessible(true);
@@ -393,8 +496,8 @@ public final class IosBarHook extends XposedModule {
             setter.invoke(provider, Insets.of(0, 0, 0, 0));
             changed++;
         }
-        if (changed > 0 && !logged) {
-            logged = true;
+        if (changed > 0 && !insetLogLogged) {
+            insetLogLogged = true;
             log(Log.INFO, "navigationBars provider inset set to zero; gesture providers preserved");
         }
     }
@@ -416,7 +519,7 @@ public final class IosBarHook extends XposedModule {
                         && ((((Number) value).intValue() & NAVIGATION_BARS) != 0);
             }
         } catch (Throwable ignored) {
-            // A hidden framework shape change should fail closed for this provider.
+            // Fail closed for this provider if the hidden framework shape changed.
         }
         return false;
     }
@@ -455,6 +558,64 @@ public final class IosBarHook extends XposedModule {
         }
         return null;
     }
+
+    private void ensureRemotePreferences() {
+        try {
+            remotePreferences = getRemotePreferences(SettingsStore.PREFS_NAME);
+        } catch (Throwable error) {
+            if (!remotePrefsWarned) {
+                remotePrefsWarned = true;
+                log(Log.WARN, "remote preferences unavailable; using defaults", error);
+            }
+        }
+    }
+
+
+
+    private void reloadConfig(boolean force) {
+        ensureRemotePreferences();
+        try {
+            SharedPreferences preferences = remotePreferences;
+            if (preferences == null) {
+                if (force) {
+                    config = BarConfig.defaults();
+                    configRevision = Long.MIN_VALUE;
+                }
+                return;
+            }
+            long revision = SettingsStore.getLong(preferences, SettingsStore.KEY_REVISION, -1L);
+            BarConfig oldConfig = config;
+            BarConfig newConfig = BarConfig.from(preferences);
+            config = newConfig;
+            configRevision = revision;
+            if (force || oldConfig.enabled != newConfig.enabled
+                    || oldConfig.immersive != newConfig.immersive
+                    || oldConfig.removeScrim != newConfig.removeScrim
+                    || oldConfig.heightDp != newConfig.heightDp
+                    || oldConfig.bottomDp != newConfig.bottomDp
+                    || oldConfig.radiusDp != newConfig.radiusDp
+                    || oldConfig.widthPortraitDp != newConfig.widthPortraitDp
+                    || oldConfig.widthLandscapeDp != newConfig.widthLandscapeDp
+                    || oldConfig.alphaPercent != newConfig.alphaPercent
+                    || oldConfig.colorMode != newConfig.colorMode
+                    || oldConfig.customColor != newConfig.customColor) {
+                log(Log.INFO, "config revision=" + revision
+                        + " enabled=" + newConfig.enabled
+                        + " immersive=" + newConfig.immersive
+                        + " removeScrim=" + newConfig.removeScrim
+                        + " width=" + newConfig.widthPortraitDp + "/" + newConfig.widthLandscapeDp
+                        + " height=" + newConfig.heightDp
+                        + " bottom=" + newConfig.bottomDp
+                        + " radius=" + newConfig.radiusDp
+                        + " alpha=" + newConfig.alphaPercent
+                        + " colorMode=" + newConfig.colorMode);
+            }
+        } catch (Throwable error) {
+            log(Log.WARN, "failed to reload settings", error);
+        }
+    }
+
+
 
     private void log(int priority, String message) {
         log(priority, TAG, message);
